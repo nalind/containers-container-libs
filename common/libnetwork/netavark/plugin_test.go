@@ -62,7 +62,7 @@ var _ = Describe("Plugins", func() {
 		}
 		_, err := libpodNet.NetworkCreate(network, nil)
 		Expect(err).To(HaveOccurred())
-		Expect(err.Error()).To(Equal("plugin ../../bin/netavark-testplugin failed: netavark (exit code 1): my custom error"))
+		Expect(err.Error()).To(Equal("netavark (exit code 1): exit code 1, message: my custom error"))
 	})
 
 	It("create plugin change name error", func() {
@@ -72,7 +72,7 @@ var _ = Describe("Plugins", func() {
 		}
 		_, err := libpodNet.NetworkCreate(network, nil)
 		Expect(err).To(HaveOccurred())
-		Expect(err.Error()).To(Equal("invalid plugin result: changed network name"))
+		Expect(err.Error()).To(Equal("netavark (exit code 1): netavark-testplugin plugin invalid result: changed network name"))
 	})
 
 	It("create plugin change id error", func() {
@@ -82,7 +82,7 @@ var _ = Describe("Plugins", func() {
 		}
 		_, err := libpodNet.NetworkCreate(network, nil)
 		Expect(err).To(HaveOccurred())
-		Expect(err.Error()).To(Equal("invalid plugin result: changed network ID"))
+		Expect(err.Error()).To(Equal("netavark (exit code 1): netavark-testplugin plugin invalid result: changed network ID"))
 	})
 
 	It("create plugin change driver error", func() {
@@ -92,6 +92,6 @@ var _ = Describe("Plugins", func() {
 		}
 		_, err := libpodNet.NetworkCreate(network, nil)
 		Expect(err).To(HaveOccurred())
-		Expect(err.Error()).To(Equal("invalid plugin result: changed network driver"))
+		Expect(err.Error()).To(Equal("netavark (exit code 1): netavark-testplugin plugin invalid result: changed network driver"))
 	})
 })
