@@ -97,7 +97,7 @@ func (as *ArtifactStore) EventChannel() chan *Event {
 // lookupArtifactLocked looks up an artifact by fully qualified name,
 // or name@digest, full ID, or partial ID.
 // note: lookupArtifactLocked must be called while under a store lock
-func (as ArtifactStore) lookupArtifactLocked(ctx context.Context, asr ArtifactStoreReference) (*Artifact, error) {
+func (as *ArtifactStore) lookupArtifactLocked(ctx context.Context, asr ArtifactStoreReference) (*Artifact, error) {
 	artifacts, err := as.getArtifacts(ctx, nil)
 	if err != nil {
 		return nil, err
@@ -159,7 +159,7 @@ func (as ArtifactStore) lookupArtifactLocked(ctx context.Context, asr ArtifactSt
 }
 
 // Remove an artifact from the local artifact store.
-func (as ArtifactStore) Remove(ctx context.Context, asr ArtifactStoreReference) (_ *digest.Digest, removeErr error) {
+func (as *ArtifactStore) Remove(ctx context.Context, asr ArtifactStoreReference) (_ *digest.Digest, removeErr error) {
 	as.lock.Lock()
 	defer as.lock.Unlock()
 
@@ -191,7 +191,7 @@ func (as ArtifactStore) Remove(ctx context.Context, asr ArtifactStoreReference) 
 }
 
 // Inspect an artifact in a local store.
-func (as ArtifactStore) Inspect(ctx context.Context, asr ArtifactStoreReference) (*Artifact, error) {
+func (as *ArtifactStore) Inspect(ctx context.Context, asr ArtifactStoreReference) (*Artifact, error) {
 	as.lock.RLock()
 	defer as.lock.Unlock()
 
@@ -199,7 +199,7 @@ func (as ArtifactStore) Inspect(ctx context.Context, asr ArtifactStoreReference)
 }
 
 // List artifacts in the local store.
-func (as ArtifactStore) List(ctx context.Context) (ArtifactList, error) {
+func (as *ArtifactStore) List(ctx context.Context) (ArtifactList, error) {
 	as.lock.RLock()
 	defer as.lock.Unlock()
 
@@ -207,7 +207,7 @@ func (as ArtifactStore) List(ctx context.Context) (ArtifactList, error) {
 }
 
 // Pull an artifact from an image registry to a local store.
-func (as ArtifactStore) Pull(ctx context.Context, ref ArtifactReference, opts libimage.CopyOptions) (_ digest.Digest, pullErr error) {
+func (as *ArtifactStore) Pull(ctx context.Context, ref ArtifactReference, opts libimage.CopyOptions) (_ digest.Digest, pullErr error) {
 	if as.eventChannel != nil {
 		defer func() {
 			if pullErr != nil {
@@ -247,7 +247,7 @@ func (as ArtifactStore) Pull(ctx context.Context, ref ArtifactReference, opts li
 }
 
 // Push an artifact to an image registry.
-func (as ArtifactStore) Push(ctx context.Context, src, dest ArtifactReference, opts libimage.CopyOptions) (_ digest.Digest, pushErr error) {
+func (as *ArtifactStore) Push(ctx context.Context, src, dest ArtifactReference, opts libimage.CopyOptions) (_ digest.Digest, pushErr error) {
 	if as.eventChannel != nil {
 		defer func() {
 			if pushErr != nil {
@@ -308,7 +308,7 @@ func createNewArtifactManifest(options *libartTypes.AddOptions) specV1.Manifest 
 }
 
 // cleanupAfterAppend removes previous image when doing an append.
-func cleanupAfterAppend(ctx context.Context, oldDigest digest.Digest, as ArtifactStore) error {
+func cleanupAfterAppend(ctx context.Context, oldDigest digest.Digest, as *ArtifactStore) error {
 	lrs, err := layout.List(as.storePath)
 	if err != nil {
 		return err
@@ -331,7 +331,7 @@ func cleanupAfterAppend(ctx context.Context, oldDigest digest.Digest, as Artifac
 
 // Add takes one or more artifact blobs and add them to the local artifact store.  The empty
 // string input is for possible custom artifact types.
-func (as ArtifactStore) Add(ctx context.Context, dest ArtifactReference, artifactBlobs []libartTypes.ArtifactBlob, options *libartTypes.AddOptions) (_ *digest.Digest, addErr error) {
+func (as *ArtifactStore) Add(ctx context.Context, dest ArtifactReference, artifactBlobs []libartTypes.ArtifactBlob, options *libartTypes.AddOptions) (_ *digest.Digest, addErr error) {
 	if as.eventChannel != nil {
 		defer func() {
 			if addErr != nil {
@@ -514,7 +514,7 @@ func (as ArtifactStore) Add(ctx context.Context, dest ArtifactReference, artifac
 	return &artifactManifestDigest, nil
 }
 
-func getArtifactAndImageSource(ctx context.Context, as ArtifactStore, asr ArtifactStoreReference, options *libartTypes.FilterBlobOptions) (*Artifact, types.ImageSource, error) {
+func getArtifactAndImageSource(ctx context.Context, as *ArtifactStore, asr ArtifactStoreReference, options *libartTypes.FilterBlobOptions) (*Artifact, types.ImageSource, error) {
 	if len(options.Digest) > 0 && len(options.Title) > 0 {
 		return nil, nil, errors.New("cannot specify both digest and title")
 	}
@@ -535,7 +535,7 @@ func getArtifactAndImageSource(ctx context.Context, as ArtifactStore, asr Artifa
 }
 
 // BlobMountPaths allows the caller to access the file names from the store and how they should be mounted.
-func (as ArtifactStore) BlobMountPaths(ctx context.Context, asr ArtifactStoreReference, options *libartTypes.BlobMountPathOptions) ([]libartTypes.BlobMountPath, error) {
+func (as *ArtifactStore) BlobMountPaths(ctx context.Context, asr ArtifactStoreReference, options *libartTypes.BlobMountPathOptions) ([]libartTypes.BlobMountPath, error) {
 	// FIX ME
 	// LOCKING BUG: getArtifactAndImageSource assumes a locked ArtifactStore
 	arty, imgSrc, err := getArtifactAndImageSource(ctx, as, asr, &options.FilterBlobOptions)
@@ -594,7 +594,7 @@ func (as ArtifactStore) BlobMountPaths(ctx context.Context, asr ArtifactStoreRef
 }
 
 // Extract an artifact to local file or directory.
-func (as ArtifactStore) Extract(ctx context.Context, nameOrDigest ArtifactStoreReference, target string, options *libartTypes.ExtractOptions) error {
+func (as *ArtifactStore) Extract(ctx context.Context, nameOrDigest ArtifactStoreReference, target string, options *libartTypes.ExtractOptions) error {
 	// FIX ME
 	// LOCKING BUG: getArtifactAndImageSource assumes a locked ArtifactStore
 	arty, imgSrc, err := getArtifactAndImageSource(ctx, as, nameOrDigest, &options.FilterBlobOptions)
@@ -663,7 +663,7 @@ func (as ArtifactStore) Extract(ctx context.Context, nameOrDigest ArtifactStoreR
 }
 
 // Extract an artifact to tar stream.
-func (as ArtifactStore) ExtractTarStream(ctx context.Context, w io.Writer, asr ArtifactStoreReference, options *libartTypes.ExtractOptions) error {
+func (as *ArtifactStore) ExtractTarStream(ctx context.Context, w io.Writer, asr ArtifactStoreReference, options *libartTypes.ExtractOptions) error {
 	if options == nil {
 		options = &libartTypes.ExtractOptions{}
 	}
@@ -862,7 +862,7 @@ func copyTrustedImageBlobToTarStream(ctx context.Context, imgSrc types.ImageSour
 	return nil
 }
 
-func (as ArtifactStore) createEmptyManifest() error {
+func (as *ArtifactStore) createEmptyManifest() error {
 	as.lock.Lock()
 	defer as.lock.Unlock()
 	index := specV1.Index{
@@ -877,13 +877,13 @@ func (as ArtifactStore) createEmptyManifest() error {
 	return os.WriteFile(as.indexPath(), rawData, 0o644)
 }
 
-func (as ArtifactStore) indexPath() string {
+func (as *ArtifactStore) indexPath() string {
 	return filepath.Join(as.storePath, specV1.ImageIndexFile)
 }
 
 // getArtifacts returns an ArtifactList based on the artifact's store.  The return error and
 // unused opts is meant for future growth like filters, etc so the API does not change.
-func (as ArtifactStore) getArtifacts(ctx context.Context, _ *libartTypes.GetArtifactOptions) (ArtifactList, error) {
+func (as *ArtifactStore) getArtifacts(ctx context.Context, _ *libartTypes.GetArtifactOptions) (ArtifactList, error) {
 	var al ArtifactList
 
 	lrs, err := layout.List(as.storePath)
