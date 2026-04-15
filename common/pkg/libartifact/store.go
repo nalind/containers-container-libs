@@ -41,6 +41,7 @@ type ArtifactStore struct {
 	SystemContext *types.SystemContext
 	storePath     string
 	lock          *lockfile.LockFile
+	eventChannel  chan *Event
 }
 
 // NewArtifactStore is a constructor for artifact stores.  Most artifact dealings depend on this. Store path is
@@ -79,6 +80,18 @@ func NewArtifactStore(storePath string, sc *types.SystemContext) (*ArtifactStore
 		}
 	}
 	return artifactStore, nil
+}
+
+// EventChannel creates a buffered channel for events that the ArtifactStore will use
+// to write events to. Callers are expected to read from the channel in a
+// timely manner.
+// Can be called once for a given ArtifactStore.
+func (as *ArtifactStore) EventChannel() chan *Event {
+	if as.eventChannel != nil {
+		return as.eventChannel
+	}
+	as.eventChannel = make(chan *Event, 100)
+	return as.eventChannel
 }
 
 // lookupArtifactLocked looks up an artifact by fully qualified name,
@@ -146,7 +159,7 @@ func (as ArtifactStore) lookupArtifactLocked(ctx context.Context, asr ArtifactSt
 }
 
 // Remove an artifact from the local artifact store.
-func (as ArtifactStore) Remove(ctx context.Context, asr ArtifactStoreReference) (*digest.Digest, error) {
+func (as ArtifactStore) Remove(ctx context.Context, asr ArtifactStoreReference) (_ *digest.Digest, removeErr error) {
 	as.lock.Lock()
 	defer as.lock.Unlock()
 
@@ -154,11 +167,27 @@ func (as ArtifactStore) Remove(ctx context.Context, asr ArtifactStoreReference) 
 	if err != nil {
 		return nil, err
 	}
+
+	if as.eventChannel != nil {
+		defer func() {
+			if removeErr != nil {
+				as.writeEvent(&Event{ID: arty.Digest.String(), Name: arty.Name, Time: time.Now(), Type: EventTypeArtifactRemoveError, Error: removeErr})
+			}
+		}()
+	}
+
 	ir, err := layout.NewReference(as.storePath, arty.Name)
 	if err != nil {
 		return nil, err
 	}
-	return &arty.Digest, ir.DeleteImage(ctx, as.SystemContext)
+	if err := ir.DeleteImage(ctx, as.SystemContext); err != nil {
+		return nil, err
+	}
+
+	if as.eventChannel != nil {
+		as.writeEvent(&Event{ID: arty.Digest.String(), Name: arty.Name, Time: time.Now(), Type: EventTypeArtifactRemove})
+	}
+	return &arty.Digest, nil
 }
 
 // Inspect an artifact in a local store.
@@ -178,7 +207,15 @@ func (as ArtifactStore) List(ctx context.Context) (ArtifactList, error) {
 }
 
 // Pull an artifact from an image registry to a local store.
-func (as ArtifactStore) Pull(ctx context.Context, ref ArtifactReference, opts libimage.CopyOptions) (digest.Digest, error) {
+func (as ArtifactStore) Pull(ctx context.Context, ref ArtifactReference, opts libimage.CopyOptions) (_ digest.Digest, pullErr error) {
+	if as.eventChannel != nil {
+		defer func() {
+			if pullErr != nil {
+				as.writeEvent(&Event{Name: ref.String(), Time: time.Now(), Type: EventTypeArtifactPullError, Error: pullErr})
+			}
+		}()
+	}
+
 	srcRef, err := docker.NewReference(ref.ref)
 	if err != nil {
 		return "", err
@@ -202,11 +239,23 @@ func (as ArtifactStore) Pull(ctx context.Context, ref ArtifactReference, opts li
 	if err != nil {
 		return "", err
 	}
-	return digest.FromBytes(artifactBytes), nil
+	artifactDigest := digest.FromBytes(artifactBytes)
+	if as.eventChannel != nil {
+		as.writeEvent(&Event{ID: artifactDigest.String(), Name: ref.String(), Time: time.Now(), Type: EventTypeArtifactPull})
+	}
+	return artifactDigest, nil
 }
 
 // Push an artifact to an image registry.
-func (as ArtifactStore) Push(ctx context.Context, src, dest ArtifactReference, opts libimage.CopyOptions) (digest.Digest, error) {
+func (as ArtifactStore) Push(ctx context.Context, src, dest ArtifactReference, opts libimage.CopyOptions) (_ digest.Digest, pushErr error) {
+	if as.eventChannel != nil {
+		defer func() {
+			if pushErr != nil {
+				as.writeEvent(&Event{Name: dest.String(), Time: time.Now(), Type: EventTypeArtifactPushError, Error: pushErr})
+			}
+		}()
+	}
+
 	destRef, err := docker.NewReference(dest.ref)
 	if err != nil {
 		return "", err
@@ -233,6 +282,9 @@ func (as ArtifactStore) Push(ctx context.Context, src, dest ArtifactReference, o
 		return "", err
 	}
 	artifactDigest := digest.FromBytes(artifactBytes)
+	if as.eventChannel != nil {
+		as.writeEvent(&Event{ID: artifactDigest.String(), Name: dest.String(), Time: time.Now(), Type: EventTypeArtifactPush})
+	}
 	return artifactDigest, nil
 }
 
@@ -279,7 +331,15 @@ func cleanupAfterAppend(ctx context.Context, oldDigest digest.Digest, as Artifac
 
 // Add takes one or more artifact blobs and add them to the local artifact store.  The empty
 // string input is for possible custom artifact types.
-func (as ArtifactStore) Add(ctx context.Context, dest ArtifactReference, artifactBlobs []libartTypes.ArtifactBlob, options *libartTypes.AddOptions) (*digest.Digest, error) {
+func (as ArtifactStore) Add(ctx context.Context, dest ArtifactReference, artifactBlobs []libartTypes.ArtifactBlob, options *libartTypes.AddOptions) (_ *digest.Digest, addErr error) {
+	if as.eventChannel != nil {
+		defer func() {
+			if addErr != nil {
+				as.writeEvent(&Event{Name: dest.String(), Time: time.Now(), Type: EventTypeArtifactAddError, Error: addErr})
+			}
+		}()
+	}
+
 	if options.Append && len(options.ArtifactMIMEType) > 0 {
 		return nil, errors.New("append option is not compatible with type option")
 	}
@@ -446,6 +506,10 @@ func (as ArtifactStore) Add(ctx context.Context, dest ArtifactReference, artifac
 		if err := cleanupAfterAppend(ctx, oldDigest, as); err != nil {
 			return nil, err
 		}
+	}
+
+	if as.eventChannel != nil {
+		as.writeEvent(&Event{ID: artifactManifestDigest.String(), Name: dest.String(), Time: time.Now(), Type: EventTypeArtifactAdd})
 	}
 	return &artifactManifestDigest, nil
 }
