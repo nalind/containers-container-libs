@@ -206,6 +206,39 @@ func (as *ArtifactStore) List(ctx context.Context) (ArtifactList, error) {
 	return as.getArtifacts(ctx, nil)
 }
 
+// Execute fn while holding the store lock and providing a reference to the local layout.
+func (as *ArtifactStore) withLockedLayout(localName string, fn func(localRef types.ImageReference) (digest.Digest, error)) (digest.Digest, error) {
+	as.lock.Lock()
+	defer as.lock.Unlock()
+
+	ref, err := layout.NewReference(as.storePath, localName)
+	if err != nil {
+		return "", err
+	}
+
+	return fn(ref)
+}
+
+// Copy artifact from srcRef to destRef and return the digest of the copied artifact.
+func (as *ArtifactStore) copyArtifact(ctx context.Context, srcRef types.ImageReference, destRef types.ImageReference, opts libimage.CopyOptions) (_ digest.Digest, err error) {
+	copyer, err := libimage.NewCopier(&opts, as.SystemContext)
+	if err != nil {
+		return "", err
+	}
+	defer func() {
+		closeErr := copyer.Close()
+		if err == nil {
+			err = closeErr
+		}
+	}()
+	artifactBytes, err := copyer.Copy(ctx, srcRef, destRef)
+	if err != nil {
+		return "", err
+	}
+	artifactDigest := digest.FromBytes(artifactBytes)
+	return artifactDigest, nil
+}
+
 // Pull an artifact from an image registry to a local store.
 func (as *ArtifactStore) Pull(ctx context.Context, ref ArtifactReference, opts libimage.CopyOptions) (_ digest.Digest, pullErr error) {
 	if as.eventChannel != nil {
@@ -215,31 +248,16 @@ func (as *ArtifactStore) Pull(ctx context.Context, ref ArtifactReference, opts l
 			}
 		}()
 	}
-
 	srcRef, err := docker.NewReference(ref.ref)
 	if err != nil {
 		return "", err
 	}
-	as.lock.Lock()
-	defer as.lock.Unlock()
-
-	destRef, err := layout.NewReference(as.storePath, ref.String())
+	artifactDigest, err := as.withLockedLayout(ref.String(), func(localRef types.ImageReference) (digest.Digest, error) {
+		return as.copyArtifact(ctx, srcRef, localRef, opts)
+	})
 	if err != nil {
 		return "", err
 	}
-	copyer, err := libimage.NewCopier(&opts, as.SystemContext)
-	if err != nil {
-		return "", err
-	}
-	artifactBytes, err := copyer.Copy(ctx, srcRef, destRef)
-	if err != nil {
-		return "", err
-	}
-	err = copyer.Close()
-	if err != nil {
-		return "", err
-	}
-	artifactDigest := digest.FromBytes(artifactBytes)
 	if as.eventChannel != nil {
 		as.writeEvent(&Event{ID: artifactDigest.String(), Name: ref.String(), Time: time.Now(), Type: EventTypeArtifactPull})
 	}
@@ -255,33 +273,16 @@ func (as *ArtifactStore) Push(ctx context.Context, src, dest ArtifactReference, 
 			}
 		}()
 	}
-
 	destRef, err := docker.NewReference(dest.ref)
 	if err != nil {
 		return "", err
 	}
-
-	as.lock.Lock()
-	defer as.lock.Unlock()
-
-	srcRef, err := layout.NewReference(as.storePath, src.String())
+	artifactDigest, err := as.withLockedLayout(src.String(), func(localRef types.ImageReference) (digest.Digest, error) {
+		return as.copyArtifact(ctx, localRef, destRef, opts)
+	})
 	if err != nil {
 		return "", err
 	}
-	copyer, err := libimage.NewCopier(&opts, as.SystemContext)
-	if err != nil {
-		return "", err
-	}
-	artifactBytes, err := copyer.Copy(ctx, srcRef, destRef)
-	if err != nil {
-		return "", err
-	}
-
-	err = copyer.Close()
-	if err != nil {
-		return "", err
-	}
-	artifactDigest := digest.FromBytes(artifactBytes)
 	if as.eventChannel != nil {
 		as.writeEvent(&Event{ID: artifactDigest.String(), Name: dest.String(), Time: time.Now(), Type: EventTypeArtifactPush})
 	}
