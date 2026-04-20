@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -15,7 +16,9 @@ import (
 	specV1 "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.podman.io/common/libimage"
 	libartTypes "go.podman.io/common/pkg/libartifact/types"
+	"go.podman.io/image/v5/oci/layout"
 	"go.podman.io/image/v5/types"
 )
 
@@ -876,4 +879,185 @@ func TestDetermineBlobMIMEType(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestArtifactStore_copyArtifact(t *testing.T) {
+	// Setup source and destination stores
+	asSrc, ctx := setupTestStore(t)
+	asDest, _ := setupTestStore(t)
+
+	// Add an artifact to the source store
+	fileNames := map[string]int{"file1.txt": 128}
+	refName := "quay.io/test/copy-artifact:v1"
+	originalDigest, _ := helperAddArtifact(t, asSrc, refName, fileNames, nil)
+	require.NotEmpty(t, originalDigest.String())
+
+	// Create references for source and destination
+	srcRef, err := layout.NewReference(asSrc.storePath, refName)
+	require.NoError(t, err)
+	destRef, err := layout.NewReference(asDest.storePath, refName)
+	require.NoError(t, err)
+
+	// Copy the artifact
+	opts := libimage.CopyOptions{}
+	copiedDigest, err := asSrc.copyArtifact(ctx, srcRef, destRef, opts)
+	require.NoError(t, err)
+
+	// The manifest digest should be the same
+	assert.Equal(t, originalDigest.String(), copiedDigest.String())
+
+	// Verify the artifact exists in the destination store
+	artifacts, err := asDest.List(ctx)
+	require.NoError(t, err)
+	require.Len(t, artifacts, 1)
+
+	copiedArtifact := artifacts[0]
+	assert.Equal(t, refName, copiedArtifact.Name)
+	assert.Equal(t, originalDigest.String(), copiedArtifact.Digest.String())
+	assert.Len(t, copiedArtifact.Manifest.Layers, 1)
+	assert.Equal(t, "file1.txt", copiedArtifact.Manifest.Layers[0].Annotations[specV1.AnnotationTitle])
+}
+
+func TestArtifactStore_withLockedLayout(t *testing.T) {
+	as, _ := setupTestStore(t)
+	localName := "quay.io/test/locked-layout:v1"
+
+	t.Run("successful execution", func(t *testing.T) {
+		var fnCalled bool
+		expectedDigest := digest.FromString("test-digest")
+		fn := func(localRef types.ImageReference) (digest.Digest, error) {
+			fnCalled = true
+			require.NotNil(t, localRef)
+			imageName := strings.TrimPrefix(localRef.StringWithinTransport(), as.storePath+":")
+			assert.Equal(t, localName, imageName)
+			return expectedDigest, nil
+		}
+
+		d, err := as.withLockedLayout(localName, fn)
+		require.NoError(t, err)
+		assert.True(t, fnCalled, "fn should have been called")
+		assert.Equal(t, expectedDigest, d)
+	})
+
+	t.Run("error from callback", func(t *testing.T) {
+		var fnCalled bool
+		expectedErr := errors.New("test-error")
+		fn := func(localRef types.ImageReference) (digest.Digest, error) {
+			fnCalled = true
+			require.NotNil(t, localRef)
+			imageName := strings.TrimPrefix(localRef.StringWithinTransport(), as.storePath+":")
+			assert.Equal(t, localName, imageName)
+			return "", expectedErr
+		}
+
+		d, err := as.withLockedLayout(localName, fn)
+		require.Error(t, err)
+		assert.ErrorIs(t, err, expectedErr)
+		assert.True(t, fnCalled, "fn should have been called")
+		assert.Empty(t, d)
+	})
+
+	t.Run("error creating reference", func(t *testing.T) {
+		invalidName := "invalid'image!value@"
+		fn := func(localRef types.ImageReference) (digest.Digest, error) {
+			t.Fatal("callback should not be called on reference creation error")
+			return "", nil
+		}
+
+		d, err := as.withLockedLayout(invalidName, fn)
+		require.Error(t, err)
+		assert.Empty(t, d)
+	})
+}
+
+func TestArtifactStore_EventChannel(t *testing.T) {
+	as, _ := setupTestStore(t)
+	ch := as.EventChannel()
+	require.NotNil(t, ch)
+
+	t.Run("AddSuccessAndAddError", func(t *testing.T) {
+		// AddSuccess
+		refName := "quay.io/test/event-add:v1"
+		fileNames := map[string]int{"add.txt": 64}
+
+		digest, _ := helperAddArtifact(t, as, refName, fileNames, nil)
+
+		event := <-as.eventChannel
+		require.NotNil(t, event)
+		assert.Equal(t, EventTypeArtifactAdd, event.Type)
+		assert.Equal(t, refName, event.Name)
+		assert.Equal(t, digest.String(), event.ID)
+		assert.NoError(t, event.Error)
+
+		// AddError
+		ref, err := NewArtifactReference(refName) // Same name to cause conflict
+		require.NoError(t, err)
+		blob, _ := createTestBlob(t, "add-error.txt", 32)
+		_, err = as.Add(context.TODO(), ref, []libartTypes.ArtifactBlob{blob}, &libartTypes.AddOptions{ArtifactMIMEType: "test"})
+		require.Error(t, err)
+		assert.ErrorIs(t, err, libartTypes.ErrArtifactAlreadyExists)
+
+		event = <-as.eventChannel
+		require.NotNil(t, event)
+		assert.Equal(t, EventTypeArtifactAddError, event.Type)
+		assert.Equal(t, refName, event.Name)
+		assert.ErrorIs(t, event.Error, libartTypes.ErrArtifactAlreadyExists)
+	})
+
+	t.Run("RemoveSuccess", func(t *testing.T) {
+		refName := "quay.io/test/event-remove:v1"
+		fileNames := map[string]int{"remove.txt": 32}
+		digest, _ := helperAddArtifact(t, as, refName, fileNames, nil)
+		<-as.eventChannel // consume AddEvent
+
+		asr, err := NewArtifactStorageReference(refName)
+		require.NoError(t, err)
+
+		removedDigest, err := as.Remove(context.TODO(), asr)
+		assert.Equal(t, digest, removedDigest)
+		require.NoError(t, err)
+
+		event := <-as.eventChannel
+		require.NotNil(t, event)
+		assert.Equal(t, EventTypeArtifactRemove, event.Type)
+		assert.Equal(t, refName, event.Name)
+		assert.Equal(t, digest.String(), event.ID)
+		assert.NoError(t, event.Error)
+	})
+
+	t.Run("PushError", func(t *testing.T) {
+		srcRefName := "quay.io/test/event-push:v1"
+		fileNames := map[string]int{"push.txt": 64}
+		helperAddArtifact(t, as, srcRefName, fileNames, nil)
+		<-as.eventChannel // consume AddEvent
+		srcRef, _ := NewArtifactReference(srcRefName)
+
+		refName := "invalid-registry.invalid/test/push-error:v1"
+		pushRef, err := NewArtifactReference(refName)
+		require.NoError(t, err)
+
+		_, err = as.Push(context.TODO(), srcRef, pushRef, libimage.CopyOptions{})
+		require.Error(t, err)
+
+		event := <-as.eventChannel
+		require.NotNil(t, event)
+		assert.Equal(t, EventTypeArtifactPushError, event.Type)
+		assert.Equal(t, refName, event.Name)
+		assert.Error(t, event.Error)
+	})
+
+	t.Run("PullError", func(t *testing.T) {
+		refName := "invalid-registry.invalid/test/pull-error:v1"
+		pullRef, err := NewArtifactReference(refName)
+		require.NoError(t, err)
+
+		_, err = as.Pull(context.TODO(), pullRef, libimage.CopyOptions{})
+		require.Error(t, err)
+
+		event := <-as.eventChannel
+		require.NotNil(t, event)
+		assert.Equal(t, EventTypeArtifactPullError, event.Type)
+		assert.Equal(t, refName, event.Name)
+		assert.Error(t, event.Error)
+	})
 }

@@ -235,8 +235,7 @@ func (as *ArtifactStore) copyArtifact(ctx context.Context, srcRef types.ImageRef
 	if err != nil {
 		return "", err
 	}
-	artifactDigest := digest.FromBytes(artifactBytes)
-	return artifactDigest, nil
+	return digest.FromBytes(artifactBytes), nil
 }
 
 // Pull an artifact from an image registry to a local store.
