@@ -2118,7 +2118,6 @@ func (r *layerStore) internalDelete(id string) ([]tempdir.CleanupTempDirFunc, er
 		return cleanFunctions, err
 	}
 
-	cleanFunctions = append(cleanFunctions, tempDirectory.Cleanup)
 	if err := tempDirectory.StageDeletion(r.tspath(id)); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return cleanFunctions, err
 	}
