@@ -443,6 +443,11 @@ func Init(home string, options graphdriver.Options) (graphdriver.Driver, error) 
 		}
 	}
 
+	// Clean up stale tempdirs early, before MakePrivate.
+	if err := tempdir.RecoverStaleDirs(filepath.Join(home, tempDirName)); err != nil {
+		return nil, fmt.Errorf("overlay: recover stale temp dirs: %w", err)
+	}
+
 	if !opts.skipMountHome {
 		if err := mount.MakePrivate(home); err != nil {
 			return nil, fmt.Errorf("overlay: failed to make mount private: %w", err)
