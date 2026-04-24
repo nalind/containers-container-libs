@@ -12,8 +12,19 @@ The registries configuration directory contains configuration for various regist
 so that the configuration does not have to be provided in command-line options over and over for every command,
 and so that it can be shared by all users of containers/image.
 
-By default, the registries configuration directory is `$HOME/.config/containers/registries.d` if it exists, otherwise `/etc/containers/registries.d` (unless overridden at compile-time);
-applications may allow using a different directory instead.
+By default, registries.d configuration may be provided by a vendor in `/usr/share/containers/registries.d/`, overridden by an administrator in `/etc/containers/registries.d/`,
+and overridden per-user in `$XDG_CONFIG_HOME/containers/registries.d/` (or `$HOME/.config/containers/registries.d/` if `$XDG_CONFIG_HOME` is not set).
+
+Rootless/rootful specific drop-in directories are also consulted where applicable:
+
+- `/usr/share/containers/registries.rootful.d/` (UID == 0)
+- `/usr/share/containers/registries.rootless.d/` (UID > 0)
+- `/usr/share/containers/registries.rootless.d/<UID>/` (UID > 0)
+- `/etc/containers/registries.rootful.d/` (UID == 0)
+- `/etc/containers/registries.rootless.d/` (UID > 0)
+- `/etc/containers/registries.rootless.d/<UID>/` (UID > 0)
+
+Only files with the `.yaml` extension are read.  Applications may allow using a different directory instead (e.g. via an explicit override).
 
 ## Directory Structure
 
