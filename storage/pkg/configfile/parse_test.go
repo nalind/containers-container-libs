@@ -290,6 +290,22 @@ func Test_Read(t *testing.T) {
 			want: []string{"valid"},
 		},
 		{
+			name: "drop in supports symlink",
+			arg: File{
+				Name:      "containers",
+				Extension: "conf",
+			},
+			setup: func(t *testing.T, tc *testcase) {
+				realFile := filepath.Join(t.TempDir(), "real.conf")
+				require.NoError(t, os.WriteFile(realFile, []byte("symlinked"), 0o600))
+
+				dropInDir := filepath.Join(tc.arg.RootForImplicitAbsolutePaths, systemConfigPath, "containers.conf.d")
+				require.NoError(t, os.MkdirAll(dropInDir, 0o755))
+				require.NoError(t, os.Symlink(realFile, filepath.Join(dropInDir, "10-symlink.conf")))
+			},
+			want: []string{"symlinked"},
+		},
+		{
 			name: "policy.json main files only (ignore drop-ins)",
 			arg: File{
 				Name:                 "policy",
