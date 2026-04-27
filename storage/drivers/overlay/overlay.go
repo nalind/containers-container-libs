@@ -1397,7 +1397,7 @@ func (d *Driver) removeCommon(id string, cleanup func(string) error) error {
 	if err == nil {
 		linkPath := path.Join(d.home, linkDir, string(lid))
 		if err := cleanup(linkPath); err != nil {
-			logrus.Debugf("Failed to remove link: %v", err)
+			logrus.Warnf("Failed to remove link: %v", err)
 		}
 	}
 
