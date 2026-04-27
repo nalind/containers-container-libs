@@ -823,15 +823,18 @@ func (r *layerStore) GarbageCollect() error {
 		}
 
 		// Remove layer and any related data of unreferenced id
+		logrus.Debugf("removing driver layer %q", id)
 		if err := r.driver.Remove(id); err != nil {
-			logrus.Debugf("removing driver layer %q", id)
 			return err
 		}
-
-		logrus.Debugf("removing %q", r.tspath(id))
-		os.Remove(r.tspath(id))
-		logrus.Debugf("removing %q", r.datadir(id))
-		os.RemoveAll(r.datadir(id))
+		// Best-effort removal of orphaned metadata; the driver layer is
+		// already gone, so warn but don't fail the overall GC.
+		if err := os.Remove(r.tspath(id)); err != nil && !errors.Is(err, os.ErrNotExist) {
+			logrus.Warnf("Failed to remove tar-split file %q: %v", r.tspath(id), err)
+		}
+		if err := os.RemoveAll(r.datadir(id)); err != nil {
+			logrus.Warnf("Failed to remove data directory %q: %v", r.datadir(id), err)
+		}
 	}
 
 	// Clean up any orphaned tar-split or data files in the layer metadata
