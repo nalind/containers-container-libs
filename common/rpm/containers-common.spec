@@ -84,10 +84,6 @@ not required by Skopeo.
 %prep
 %autosetup -Sgit -n %{repo}-common-v%{version}
 
-# Fine-grain distro- and release-specific tuning of config files,
-# e.g., seccomp, composefs, registries on different RHEL/Fedora versions
-bash common/rpm/update-config-files.sh
-
 %build
 mkdir -p man5
 for i in common/docs/*.5.md image/docs/*.5.md storage/docs/*.5.md; do
@@ -96,7 +92,7 @@ done
 
 %install
 # install config and policy files for registries
-install -dp %{buildroot}%{_sysconfdir}/containers/{certs.d,oci/hooks.d,networks,systemd}
+install -dp %{buildroot}%{_sysconfdir}/containers/{certs.d,oci/hooks.d,networks,systemd,registries.conf.d,registries.d}
 install -dp %{buildroot}%{_sharedstatedir}/containers/sigstore
 install -dp %{buildroot}%{_datadir}/containers/systemd
 install -dp %{buildroot}%{_prefix}/lib/containers/storage
@@ -105,11 +101,23 @@ touch %{buildroot}%{_prefix}/lib/containers/storage/overlay-images/images.lock
 install -dp -m 700 %{buildroot}%{_prefix}/lib/containers/storage/overlay-layers
 touch %{buildroot}%{_prefix}/lib/containers/storage/overlay-layers/layers.lock
 
-install -Dp -m0644 %{SOURCE1} %{buildroot}%{_sysconfdir}/containers/registries.conf.d/000-shortnames.conf
-install -Dp -m0644 image/default.yaml %{buildroot}%{_sysconfdir}/containers/registries.d/default.yaml
-install -Dp -m0644 image/default-policy.json %{buildroot}%{_sysconfdir}/containers/policy.json
-install -Dp -m0644 image/registries.conf %{buildroot}%{_sysconfdir}/containers/registries.conf
+install -Dp -m0644 %{SOURCE1} %{buildroot}%{_datadir}/containers/registries.conf.d/000-shortnames.conf
+install -Dp -m0644 image/default.yaml %{buildroot}%{_datadir}/containers/registries.d/default.yaml
+install -Dp -m0644 image/default-policy.json %{buildroot}%{_datadir}/containers/policy.json
+install -Dp -m0644 image/registries.conf %{buildroot}%{_datadir}/containers/registries.conf
 install -Dp -m0644 storage/storage.conf %{buildroot}%{_datadir}/containers/storage.conf
+
+# install custom vendor overwrites
+install -Dp -m0644 common/rpm/00-containers.conf %{buildroot}%{_datadir}/containers/containers.conf.d/00-vendor.conf
+install -Dp -m0644 common/rpm/00-storage.conf %{buildroot}%{_datadir}/containers/storage.conf.d/00-vendor.conf
+install -Dp -m0644 common/rpm/00-storage-additional-store.conf %{buildroot}%{_datadir}/containers/storage.rootful.conf.d/00-vendor-additional-store.conf
+
+%if %{defined fedora}
+install -Dp -m0644 common/rpm/00-fedora-registries.conf %{buildroot}%{_datadir}/containers/registries.conf.d/00-vendor.conf
+%else
+install -Dp -m0644 common/rpm/00-rhel-registries.conf %{buildroot}%{_datadir}/containers/registries.conf.d/00-vendor.conf
+%endif
+
 
 # RPM-GPG-KEY-redhat-release already exists on rhel envs, install only on
 # fedora and centos
@@ -117,8 +125,8 @@ install -Dp -m0644 storage/storage.conf %{buildroot}%{_datadir}/containers/stora
 install -Dp -m0644 %{SOURCE2} %{buildroot}%{_sysconfdir}/pki/rpm-gpg/RPM-GPG-KEY-redhat-release
 %endif
 
-install -Dp -m0644 common/contrib/redhat/registry.access.redhat.com.yaml -t %{buildroot}%{_sysconfdir}/containers/registries.d
-install -Dp -m0644 common/contrib/redhat/registry.redhat.io.yaml -t %{buildroot}%{_sysconfdir}/containers/registries.d
+install -Dp -m0644 common/contrib/redhat/registry.access.redhat.com.yaml -t %{buildroot}%{_datadir}/containers/registries.d
+install -Dp -m0644 common/contrib/redhat/registry.redhat.io.yaml -t %{buildroot}%{_datadir}/containers/registries.d
 
 # install manpages
 for i in man5/*.5; do
@@ -141,6 +149,22 @@ ln -s ../../../..%{_sysconfdir}/yum.repos.d/redhat.repo %{buildroot}%{_datadir}/
 # Placeholder check to silence rpmlint warnings
 %check
 
+%posttrans
+  # Restore user-modified config files from .rpmsave
+  for file in \
+      policy.json \
+      registries.conf \
+      registries.conf.d/000-shortnames.conf \
+      registries.d/default.yaml \
+      registries.d/registry.redhat.io.yaml \
+      registries.d/registry.access.redhat.com.yaml
+  do
+      file="%{_sysconfdir}/containers/${file}"
+      if [ -f "${file}.rpmsave" ]; then
+          mv "${file}.rpmsave" "${file}"
+      fi
+  done
+
 %files
 %dir %{_sysconfdir}/containers
 %dir %{_sysconfdir}/containers/certs.d
@@ -157,15 +181,10 @@ ln -s ../../../..%{_sysconfdir}/yum.repos.d/redhat.repo %{buildroot}%{_datadir}/
 %{_prefix}/lib/containers/storage/overlay-images/images.lock
 %{_prefix}/lib/containers/storage/overlay-layers/layers.lock
 
-%config(noreplace) %{_sysconfdir}/containers/policy.json
-%config(noreplace) %{_sysconfdir}/containers/registries.conf
-%config(noreplace) %{_sysconfdir}/containers/registries.conf.d/000-shortnames.conf
+
 %if 0%{?fedora} || 0%{?centos}
 %{_sysconfdir}/pki/rpm-gpg/RPM-GPG-KEY-redhat-release
 %endif
-%config(noreplace) %{_sysconfdir}/containers/registries.d/default.yaml
-%config(noreplace) %{_sysconfdir}/containers/registries.d/registry.redhat.io.yaml
-%config(noreplace) %{_sysconfdir}/containers/registries.d/registry.access.redhat.com.yaml
 %ghost %{_sysconfdir}/containers/storage.conf
 %ghost %{_sysconfdir}/containers/containers.conf
 %dir %{_sharedstatedir}/containers/sigstore
@@ -179,6 +198,21 @@ ln -s ../../../..%{_sysconfdir}/yum.repos.d/redhat.repo %{buildroot}%{_datadir}/
 %{_datadir}/containers/containers.conf
 %{_datadir}/containers/mounts.conf
 %{_datadir}/containers/seccomp.json
+%{_datadir}/containers/policy.json
+%{_datadir}/containers/registries.conf
+%dir %{_datadir}/containers/registries.conf.d
+%{_datadir}/containers/registries.conf.d/000-shortnames.conf
+%{_datadir}/containers/registries.conf.d/00-vendor.conf
+%dir %{_datadir}/containers/registries.d
+%{_datadir}/containers/registries.d/default.yaml
+%{_datadir}/containers/registries.d/registry.redhat.io.yaml
+%{_datadir}/containers/registries.d/registry.access.redhat.com.yaml
+%dir %{_datadir}/containers/containers.conf.d
+%{_datadir}/containers/containers.conf.d/00-vendor.conf
+%dir %{_datadir}/containers/storage.conf.d
+%{_datadir}/containers/storage.conf.d/00-vendor.conf
+%dir %{_datadir}/containers/storage.rootful.conf.d
+%{_datadir}/containers/storage.rootful.conf.d/00-vendor-additional-store.conf
 %dir %{_datadir}/rhel
 %dir %{_datadir}/rhel/secrets
 %{_datadir}/rhel/secrets/*
