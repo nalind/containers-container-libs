@@ -21,6 +21,12 @@ func dockerRefFromString(t *testing.T, s string) dockerReference {
 	return dockerRef
 }
 
+func writeDockerLookaside(t *testing.T, dir, filename, registry, lookaside string) {
+	t.Helper()
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, filename), []byte(fmt.Sprintf("docker:\n  %s:\n    lookaside: %s\n", registry, lookaside)), 0o644))
+}
+
 func TestSignatureStorageBaseURL(t *testing.T) {
 	emptyDir := t.TempDir()
 	for _, c := range []struct {
@@ -66,72 +72,173 @@ func TestSignatureStorageBaseURL(t *testing.T) {
 	}
 }
 
-func TestRegistriesDirPath(t *testing.T) {
-	const nondefaultPath = "/this/is/not/the/default/registries.d"
-	const variableReference = "$HOME"
-	const rootPrefix = "/root/prefix"
-	tempHome := t.TempDir()
-	userRegistriesDir := filepath.FromSlash(".config/containers/registries.d")
-	userRegistriesDirPath := filepath.Join(tempHome, userRegistriesDir)
-	for _, c := range []struct {
-		sys             *types.SystemContext
-		userFilePresent bool
-		expected        string
-	}{
-		// The common case
-		{nil, false, systemRegistriesDirPath},
-		// There is a context, but it does not override the path.
-		{&types.SystemContext{}, false, systemRegistriesDirPath},
-		// Path overridden
-		{&types.SystemContext{RegistriesDirPath: nondefaultPath}, false, nondefaultPath},
-		// Root overridden
-		{
-			&types.SystemContext{RootForImplicitAbsolutePaths: rootPrefix},
-			false,
-			filepath.Join(rootPrefix, systemRegistriesDirPath),
-		},
-		// Root and path overrides present simultaneously,
-		{
-			&types.SystemContext{
-				RootForImplicitAbsolutePaths: rootPrefix,
-				RegistriesDirPath:            nondefaultPath,
+func TestLoadRegistryConfiguration(t *testing.T) {
+	type testcase struct {
+		setup              func(t *testing.T) *types.SystemContext
+		wantLookaside      map[string]string
+		forbiddenDockerKey string
+		expectErr          bool
+	}
+	tests := []testcase{
+		{ // Explicit override directory: only load from there.
+			setup: func(t *testing.T) *types.SystemContext {
+				dir := t.TempDir()
+				writeDockerLookaside(t, dir, "01.yaml", "example.com", "https://override.example.com")
+				return &types.SystemContext{RegistriesDirPath: dir}
 			},
-			false,
-			nondefaultPath,
-		},
-		// User registries.d present, not overridden
-		{&types.SystemContext{}, true, userRegistriesDirPath},
-		// Context and user User registries.d preset simultaneously
-		{&types.SystemContext{RegistriesDirPath: nondefaultPath}, true, nondefaultPath},
-		// Root and user registries.d overrides present simultaneously,
-		{
-			&types.SystemContext{
-				RootForImplicitAbsolutePaths: rootPrefix,
-				RegistriesDirPath:            nondefaultPath,
+			wantLookaside: map[string]string{
+				"example.com": "https://override.example.com",
 			},
-			true,
-			nondefaultPath,
 		},
-		// No environment expansion happens in the overridden paths
-		{&types.SystemContext{RegistriesDirPath: variableReference}, false, variableReference},
-	} {
-		if c.userFilePresent {
-			err := os.MkdirAll(userRegistriesDirPath, 0o700)
+		{ // Default configfile search: drop-ins from /usr + /etc (under RootForImplicitAbsolutePaths); main registries.yaml ignored.
+			setup: func(t *testing.T) *types.SystemContext {
+				root := t.TempDir()
+				t.Setenv("XDG_CONFIG_HOME", filepath.Join(root, "xdg"))
+
+				usrRegistriesD := filepath.Join(root, "usr/share/containers/registries.d")
+				etcRegistriesD := filepath.Join(root, "etc/containers/registries.d")
+
+				writeDockerLookaside(t, usrRegistriesD, "10-vendor.yaml", "example.com", "https://vendor.example.com")
+				writeDockerLookaside(t, etcRegistriesD, "10-vendor.yaml", "example.com", "https://admin.example.com")
+				writeDockerLookaside(t, filepath.Join(root, "etc/containers"), "registries.yaml", "should.not.be.loaded", "https://wrong.example.com")
+
+				return &types.SystemContext{RootForImplicitAbsolutePaths: root}
+			},
+			wantLookaside: map[string]string{
+				"example.com": "https://admin.example.com",
+			},
+			forbiddenDockerKey: "should.not.be.loaded",
+		},
+		{ // Explicit RegistriesDirPath bypasses configfile search completely.
+			setup: func(t *testing.T) *types.SystemContext {
+				root := t.TempDir()
+				t.Setenv("XDG_CONFIG_HOME", filepath.Join(root, "xdg"))
+				userRegistriesD := filepath.Join(root, "xdg/containers/registries.d")
+				writeDockerLookaside(t, userRegistriesD, "10-user.yaml", "example.com", "https://user.example.com")
+
+				overrideDir := t.TempDir()
+				writeDockerLookaside(t, overrideDir, "01.yaml", "example.com", "https://explicit.example.com")
+
+				return &types.SystemContext{
+					RegistriesDirPath:            overrideDir,
+					RootForImplicitAbsolutePaths: root, // should not matter for the explicit override
+				}
+			},
+			wantLookaside: map[string]string{
+				"example.com": "https://explicit.example.com",
+			},
+		},
+		{ // RootForImplicitAbsolutePaths does not affect explicit RegistriesDirPath.
+			setup: func(t *testing.T) *types.SystemContext {
+				overrideDir := t.TempDir()
+				writeDockerLookaside(t, overrideDir, "01.yaml", "example.com", "https://explicit.example.com")
+
+				root := t.TempDir()
+				// If RootForImplicitAbsolutePaths were incorrectly applied to RegistriesDirPath,
+				// we'd look under root+overrideDir which doesn't exist.
+				return &types.SystemContext{RegistriesDirPath: overrideDir, RootForImplicitAbsolutePaths: root}
+			},
+			wantLookaside: map[string]string{
+				"example.com": "https://explicit.example.com",
+			},
+		},
+		{ // Explicit RegistriesDirPath is not env-expanded.
+			setup: func(t *testing.T) *types.SystemContext {
+				parent := t.TempDir()
+				literalHomeDir := filepath.Join(parent, "$HOME")
+				writeDockerLookaside(t, literalHomeDir, "01.yaml", "example.com", "https://literal.example.com")
+				return &types.SystemContext{RegistriesDirPath: literalHomeDir}
+			},
+			wantLookaside: map[string]string{
+				"example.com": "https://literal.example.com",
+			},
+		},
+		{ // user XDG_CONFIG_HOME/.../registries.d has higher priority than /etc for same filename.
+			setup: func(t *testing.T) *types.SystemContext {
+				root := t.TempDir()
+				t.Setenv("XDG_CONFIG_HOME", filepath.Join(root, "xdg"))
+
+				etcRegistriesD := filepath.Join(root, "etc/containers/registries.d")
+				writeDockerLookaside(t, etcRegistriesD, "10-same.yaml", "example.com", "https://etc.example.com")
+
+				userRegistriesD := filepath.Join(root, "xdg/containers/registries.d")
+				writeDockerLookaside(t, userRegistriesD, "10-same.yaml", "example.com", "https://user.example.com")
+
+				return &types.SystemContext{RootForImplicitAbsolutePaths: root}
+			},
+			wantLookaside: map[string]string{
+				"example.com": "https://user.example.com",
+			},
+		},
+		{ // Distinct filenames in user and /etc are both processed.
+			setup: func(t *testing.T) *types.SystemContext {
+				root := t.TempDir()
+				t.Setenv("XDG_CONFIG_HOME", filepath.Join(root, "xdg"))
+
+				etcRegistriesD := filepath.Join(root, "etc/containers/registries.d")
+				writeDockerLookaside(t, etcRegistriesD, "10-etc-only.yaml", "example.com", "https://etc.example.com")
+
+				userRegistriesD := filepath.Join(root, "xdg/containers/registries.d")
+				writeDockerLookaside(t, userRegistriesD, "20-user-only.yaml", "example.net", "https://user.example.net")
+
+				return &types.SystemContext{RootForImplicitAbsolutePaths: root}
+			},
+			wantLookaside: map[string]string{
+				"example.com": "https://etc.example.com",
+				"example.net": "https://user.example.net",
+			},
+		},
+		{ // Duplicate docker namespace across distinct filenames errors.
+			setup: func(t *testing.T) *types.SystemContext {
+				root := t.TempDir()
+				t.Setenv("XDG_CONFIG_HOME", filepath.Join(root, "xdg"))
+				etcRegistriesD := filepath.Join(root, "etc/containers/registries.d")
+				writeDockerLookaside(t, etcRegistriesD, "10-a.yaml", "example.com", "https://a.example.com")
+				writeDockerLookaside(t, etcRegistriesD, "20-b.yaml", "example.com", "https://b.example.com")
+				return &types.SystemContext{RootForImplicitAbsolutePaths: root}
+			},
+			expectErr: true,
+		},
+		{ // Duplicate default-docker across distinct filenames errors.
+			setup: func(t *testing.T) *types.SystemContext {
+				root := t.TempDir()
+				t.Setenv("XDG_CONFIG_HOME", filepath.Join(root, "xdg"))
+				etcRegistriesD := filepath.Join(root, "etc/containers/registries.d")
+				require.NoError(t, os.MkdirAll(etcRegistriesD, 0o755))
+				require.NoError(t, os.WriteFile(filepath.Join(etcRegistriesD, "10-a.yaml"), []byte("default-docker:\n    lookaside: https://a.example.com\n"), 0o644))
+				require.NoError(t, os.WriteFile(filepath.Join(etcRegistriesD, "20-b.yaml"), []byte("default-docker:\n    lookaside: https://b.example.com\n"), 0o644))
+				return &types.SystemContext{RootForImplicitAbsolutePaths: root}
+			},
+			expectErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run("", func(t *testing.T) {
+			sys := tt.setup(t)
+			cfg, err := loadRegistryConfiguration(sys)
+			if tt.expectErr {
+				assert.Error(t, err)
+				return
+			}
 			require.NoError(t, err)
-		} else {
-			err := os.RemoveAll(userRegistriesDirPath)
-			require.NoError(t, err)
-		}
-		path := registriesDirPathWithHomeDir(c.sys, tempHome)
-		assert.Equal(t, c.expected, path)
+			for ns, lookaside := range tt.wantLookaside {
+				assert.Equal(t, lookaside, cfg.Docker[ns].Lookaside)
+			}
+			if tt.forbiddenDockerKey != "" {
+				_, ok := cfg.Docker[tt.forbiddenDockerKey]
+				assert.False(t, ok)
+			}
+		})
 	}
 }
 
-func TestLoadAndMergeConfig(t *testing.T) {
+func TestLoadRegistryConfigurationFromRegistriesDirPath(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	// No registries.d exists
-	config, err := loadAndMergeConfig(filepath.Join(tmpDir, "thisdoesnotexist"))
+	config, err := loadRegistryConfiguration(&types.SystemContext{RegistriesDirPath: filepath.Join(tmpDir, "thisdoesnotexist")})
 	require.NoError(t, err)
 	assert.Equal(t, &registryConfiguration{Docker: map[string]registryNamespace{}}, config)
 
@@ -139,7 +246,7 @@ func TestLoadAndMergeConfig(t *testing.T) {
 	emptyDir := filepath.Join(tmpDir, "empty")
 	err = os.Mkdir(emptyDir, 0o755)
 	require.NoError(t, err)
-	config, err = loadAndMergeConfig(emptyDir)
+	config, err = loadRegistryConfiguration(&types.SystemContext{RegistriesDirPath: emptyDir})
 	require.NoError(t, err)
 	assert.Equal(t, &registryConfiguration{Docker: map[string]registryNamespace{}}, config)
 
@@ -147,7 +254,7 @@ func TestLoadAndMergeConfig(t *testing.T) {
 	unreadableDir := filepath.Join(tmpDir, "unreadable")
 	err = os.Mkdir(unreadableDir, 0o000)
 	require.NoError(t, err)
-	_, err = loadAndMergeConfig(unreadableDir)
+	_, err = loadRegistryConfiguration(&types.SystemContext{RegistriesDirPath: unreadableDir})
 	assert.Error(t, err)
 
 	// An unreadable file in a registries.d directory
@@ -158,7 +265,7 @@ func TestLoadAndMergeConfig(t *testing.T) {
 	require.NoError(t, err)
 	err = os.WriteFile(filepath.Join(unreadableFileDir, "1.yaml"), nil, 0o000)
 	require.NoError(t, err)
-	_, err = loadAndMergeConfig(unreadableFileDir)
+	_, err = loadRegistryConfiguration(&types.SystemContext{RegistriesDirPath: unreadableFileDir})
 	assert.Error(t, err)
 
 	// Invalid YAML
@@ -167,7 +274,7 @@ func TestLoadAndMergeConfig(t *testing.T) {
 	require.NoError(t, err)
 	err = os.WriteFile(filepath.Join(invalidYAMLDir, "0.yaml"), []byte("}"), 0o644)
 	require.NoError(t, err)
-	_, err = loadAndMergeConfig(invalidYAMLDir)
+	_, err = loadRegistryConfiguration(&types.SystemContext{RegistriesDirPath: invalidYAMLDir})
 	assert.Error(t, err)
 
 	// Duplicate DefaultDocker
@@ -180,7 +287,7 @@ func TestLoadAndMergeConfig(t *testing.T) {
 	err = os.WriteFile(filepath.Join(duplicateDefault, "1.yaml"),
 		[]byte("default-docker:\n lookaside: file:////tmp/different"), 0o644)
 	require.NoError(t, err)
-	_, err = loadAndMergeConfig(duplicateDefault)
+	_, err = loadRegistryConfiguration(&types.SystemContext{RegistriesDirPath: duplicateDefault})
 	assert.ErrorContains(t, err, "0.yaml")
 	assert.ErrorContains(t, err, "1.yaml")
 
@@ -194,12 +301,12 @@ func TestLoadAndMergeConfig(t *testing.T) {
 	err = os.WriteFile(filepath.Join(duplicateNS, "1.yaml"),
 		[]byte("docker:\n example.com:\n  lookaside: file:////tmp/different"), 0o644)
 	require.NoError(t, err)
-	_, err = loadAndMergeConfig(duplicateNS)
+	_, err = loadRegistryConfiguration(&types.SystemContext{RegistriesDirPath: duplicateNS})
 	assert.ErrorContains(t, err, "0.yaml")
 	assert.ErrorContains(t, err, "1.yaml")
 
 	// A fully worked example, including an empty-dictionary file and a non-.yaml file
-	config, err = loadAndMergeConfig("fixtures/registries.d")
+	config, err = loadRegistryConfiguration(&types.SystemContext{RegistriesDirPath: "fixtures/registries.d"})
 	require.NoError(t, err)
 	assert.Equal(t, &registryConfiguration{
 		DefaultDocker: &registryNamespace{Lookaside: "file:///mnt/companywide/signatures/for/other/repositories"},
