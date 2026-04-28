@@ -572,12 +572,12 @@ var _ = Describe("Config Local", func() {
 		// Given
 		config, err := newLocked(&Options{}, testConfigPath(""))
 		gomega.Expect(err).ToNot(gomega.HaveOccurred())
-		gomega.Expect(config.Machine.Rosetta).To(gomega.BeTrue())
+		gomega.Expect(config.Machine.Rosetta).To(gomega.BeFalse())
 		// When
 		config2, err := newLocked(&Options{}, testConfigPath("testdata/containers_default.conf"))
 		// Then
 		gomega.Expect(err).ToNot(gomega.HaveOccurred())
-		gomega.Expect(config2.Machine.Rosetta).To(gomega.BeFalse())
+		gomega.Expect(config2.Machine.Rosetta).To(gomega.BeTrue())
 	})
 	It("Get ImportNativeCA value", func() {
 		// Given
