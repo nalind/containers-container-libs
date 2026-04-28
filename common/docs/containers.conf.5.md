@@ -1022,12 +1022,12 @@ is interpreted as the default provider for the current host OS.
 | Mac      | "" ("libkrun": Launch machine via libkrun platform, optimized for sharing GPU with the machine) | "applehv" (Apple Hypervisor) |
 
 
-**rosetta**="false"
+**rosetta**=false
 
 Rosetta supports running x86_64 Linux binaries on a Podman machine on Apple silicon.
 The default value is `false`. Supported on AppleHV(arm64) machines only.
 
-**import_native_ca**="false"
+**import_native_ca**=false
 
 Import the host's trusted CA certificates into the machine.
 When set to true, the certificates from the host system are imported during machine startup.
