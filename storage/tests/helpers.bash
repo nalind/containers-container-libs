@@ -26,8 +26,10 @@ function setup() {
         export _CONTAINERS_OVERLAY_DISABLE_IDMAP=yes
 }
 
-# Delete the unique root directory and a runroot directory.
-function teardown() {
+# Teardown the basic storage setup
+# Wipe the storage and shutdown the storage service,
+# then delete the unique root directory and a runroot directory.
+function basic_teardown() {
 	run storage wipe
 	if [[ $status -ne 0 ]] ; then
 		echo "$output"
@@ -37,6 +39,13 @@ function teardown() {
 		echo "$output"
 	fi
 	rm -fr ${TESTDIR}
+}
+
+# Provide the above as the default teardown method. Individual tests
+# can override teardown() if they need custom cleanup, but must call
+# basic_teardown explicitly in that case.
+function teardown() {
+	basic_teardown
 }
 
 # Create a file "$1" with random contents of length $2, or 256.
