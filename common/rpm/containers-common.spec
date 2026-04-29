@@ -73,7 +73,7 @@ Requires: passt
 Recommends: composefs
 Recommends: crun
 Requires: (crun if fedora-release-identity-server)
-Requires: netavark >= %{netavark_epoch}:1.10.3-1
+Requires: netavark >= %{netavark_epoch}:2
 Suggests: slirp4netns
 Recommends: qemu-user-static
 Requires: (qemu-user-static-aarch64 if fedora-release-identity-server)
