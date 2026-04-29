@@ -42,6 +42,11 @@ Requires: (fuse-overlayfs if fedora-release-identity-server)
 %else
 Suggests: fuse-overlayfs
 %endif
+# Conflict versions using the old config file loading to avoid mismatch between code and configs.
+Conflicts: podman < 5:6
+Conflicts: buildah < 2:1.44
+Conflicts: skopeo < 1:1.23
+
 URL: https://github.com/%{project}/%{repo}
 Source0: %{url}/archive/refs/tags/common/v%{version}.tar.gz
 Source1: https://raw.githubusercontent.com/containers/shortnames/refs/heads/main/shortnames.conf
@@ -65,7 +70,6 @@ Requires: container-network-stack
 Requires: oci-runtime
 Requires: passt
 %if %{defined fedora}
-Conflicts: podman < 5:5.0.0~rc4-1
 Recommends: composefs
 Recommends: crun
 Requires: (crun if fedora-release-identity-server)
