@@ -1817,59 +1817,6 @@ var _ = Describe("Config", func() {
 		Expect(err.Error()).To(ContainSubstring("failed to load network create: IO error: invalid IP address syntax"))
 	})
 
-	It("create bridge config with invalid static route (gw = \"foo\")", func() {
-		dest := "10.1.0.0/24"
-		gw := "foo"
-		d, _ := types.ParseCIDR(dest)
-		g := net.ParseIP(gw)
-		network := types.Network{
-			Driver: "bridge",
-			Routes: []types.Route{
-				{Destination: d, Gateway: g},
-			},
-		}
-		_, err := libpodNet.NetworkCreate(network, nil)
-		Expect(err).To(HaveOccurred())
-		Expect(err.Error()).To(ContainSubstring("invalid IP address syntax"))
-	})
-
-	It("create macvlan config with invalid static route (gw = \"foo\")", func() {
-		dest := "10.1.0.0/24"
-		gw := "foo"
-		d, _ := types.ParseCIDR(dest)
-		g := net.ParseIP(gw)
-		network := types.Network{
-			Driver: "macvlan",
-			Routes: []types.Route{
-				{Destination: d, Gateway: g},
-			},
-		}
-		_, err := libpodNet.NetworkCreate(network, nil)
-		Expect(err).To(HaveOccurred())
-		Expect(err.Error()).To(ContainSubstring("invalid IP address syntax"))
-	})
-
-	It("create ipvlan config with invalid static route (gw = \"foo\")", func() {
-		subnet := "10.1.0.0/24"
-		n, _ := types.ParseCIDR(subnet)
-		dest := "10.1.0.0/24"
-		gw := "foo"
-		d, _ := types.ParseCIDR(dest)
-		g := net.ParseIP(gw)
-		network := types.Network{
-			Driver: "ipvlan",
-			Subnets: []types.Subnet{
-				{Subnet: n},
-			},
-			Routes: []types.Route{
-				{Destination: d, Gateway: g},
-			},
-		}
-		_, err := libpodNet.NetworkCreate(network, nil)
-		Expect(err).To(HaveOccurred())
-		Expect(err.Error()).To(ContainSubstring("invalid IP address syntax"))
-	})
-
 	It("create macvlan config with metric option", func() {
 		network := types.Network{
 			Driver: "macvlan",
@@ -1966,6 +1913,36 @@ var _ = Describe("Config", func() {
 		_, err := libpodNet.NetworkCreate(network, nil)
 		Expect(err).To(HaveOccurred())
 		Expect(err.Error()).To(ContainSubstring("unable to parse \"no_default_route\""))
+	})
+
+	It("create bridge custom route type route", func() {
+		dest := "10.1.0.0/24"
+		d, _ := types.ParseCIDR(dest)
+		for _, routeType := range []types.RouteType{types.RouteTypeBlackhole, types.RouteTypeProhibit, types.RouteTypeUnreachable} {
+			network := types.Network{
+				Driver: "bridge",
+				Routes: []types.Route{
+					{Destination: d, RouteType: routeType},
+				},
+			}
+			network1, err := libpodNet.NetworkCreate(network, nil)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(network1.Name).ToNot(BeEmpty())
+			Expect(network1.Routes).To(HaveLen(1))
+			Expect(network1.Routes[0].Destination.String()).To(Equal(dest))
+			Expect(network1.Routes[0].RouteType).To(Equal(routeType))
+		}
+
+		// without gateway a unicast route should fail
+		network := types.Network{
+			Driver: "bridge",
+			Routes: []types.Route{
+				{Destination: d, RouteType: types.RouteTypeUnicast},
+			},
+		}
+		_, err := libpodNet.NetworkCreate(network, nil)
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("route 10.1.0.0/24 requires a gateway for type unicast"))
 	})
 
 	Context("network load valid existing ones", func() {
