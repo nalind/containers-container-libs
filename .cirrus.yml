@@ -31,13 +31,7 @@ env:
     # GCE project where images live
     IMAGE_PROJECT: "libpod-218412"
     # VM Image built in containers/automation_images
-    # If you are updating IMAGE_SUFFIX: We are currently using rawhide for
-    # the containers_image_sequoia tests because the rust-podman-sequoia
-    # package is not available in earlier releases; once we update to a future
-    # Fedora release (or if the package is backported), switch back from Rawhide
-    # to the latest Fedora release.
     IMAGE_SUFFIX: "c20260425t010036z-f43f42d14"
-    RAWHIDE_CACHE_IMAGE_NAME: "rawhide-${IMAGE_SUFFIX}"
 
     FEDORA_CACHE_IMAGE_NAME: "fedora-${IMAGE_SUFFIX}"
     DEBIAN_CACHE_IMAGE_NAME: "debian-${IMAGE_SUFFIX}"
@@ -162,7 +156,6 @@ images_timestamp_update_task:
         IMGNAMES: |-
             ${FEDORA_CACHE_IMAGE_NAME}
             ${DEBIAN_CACHE_IMAGE_NAME}
-            ${RAWHIDE_CACHE_IMAGE_NAME}
         BUILDID: "${CIRRUS_BUILD_ID}"
         REPOREF: "${CIRRUS_CHANGE_IN_REPO}"
         GCPJSON: ENCRYPTED[84d8f13981b019af7dfffbe13129ed035aa09ac167c55f2b4ebaccc4f91e8fca0b9c805e2bcf8f18da5b964b35c68203]
@@ -219,10 +212,10 @@ image_test_task:
           env:
               BUILDTAGS: &withopengpg 'containers_image_openpgp'
               VM_IMAGE_NAME: ${FEDORA_CACHE_IMAGE_NAME}
-        - name: "Test w/ Sequoia (currently Rawhide)"
+        - name: "Test w/ Sequoia"
           env:
               BUILDTAGS: &withsequoia 'containers_image_sequoia'
-              VM_IMAGE_NAME: ${RAWHIDE_CACHE_IMAGE_NAME}
+              VM_IMAGE_NAME: ${FEDORA_CACHE_IMAGE_NAME}
     script: |
         cd image
         ls -l ${CIRRUS_WORKING_DIR}
@@ -257,10 +250,10 @@ image_test_skopeo_task:
           env:
               BUILDTAGS: *withopengpg
               VM_IMAGE_NAME: ${FEDORA_CACHE_IMAGE_NAME}
-        - name: "Skopeo Test w/ Sequoia (currently Rawhide)"
+        - name: "Skopeo Test w/ Sequoia"
           env:
               BUILDTAGS: *withsequoia
-              VM_IMAGE_NAME: ${RAWHIDE_CACHE_IMAGE_NAME}
+              VM_IMAGE_NAME: ${FEDORA_CACHE_IMAGE_NAME}
     setup_script: >-
         "${CIRRUS_WORKING_DIR}/${IMAGE_SCRIPT_BASE}/runner.sh" setup
     vendor_script: >-
