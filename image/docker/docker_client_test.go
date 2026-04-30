@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -21,26 +22,46 @@ import (
 )
 
 func TestDockerCertDir(t *testing.T) {
-	const nondefaultFullPath = "/this/is/not/the/default/full/path"
-	const nondefaultPerHostDir = "/this/is/not/the/default/certs.d"
-	const variableReference = "$HOME"
-	const rootPrefix = "/root/prefix"
-	const registryHostPort = "thishostdefinitelydoesnotexist:5000"
+	tempRoot := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(tempRoot, "xdg"))
 
-	systemPerHostResult := filepath.Join(perHostCertDirs[len(perHostCertDirs)-1].path, registryHostPort)
+	nondefaultFullPath := filepath.Join(tempRoot, "nondefault", "full", "path")
+	nondefaultPerHostDir := filepath.Join(tempRoot, "nondefault", "certs.d")
+	const variableReference = "$HOME"
+	rootPrefix := filepath.Join(tempRoot, "rootprefix")
+	const registryHostPort = "thishostdefinitelydoesnotexist:5000"
+	const registryHostPortVendorOverDocker = "thishostdefinitelydoesnotexist:5001"
+	const registryHostPortDockerOnly = "thishostdefinitelydoesnotexist:5002"
+
+	hostDirs := []string{
+		"/etc/containers/certs.d",
+		"/etc/docker/certs.d",
+	}
+
+	// Create RootForImplicitAbsolutePaths-prefixed locations.
+	for _, d := range hostDirs {
+		require.NoError(t, os.MkdirAll(filepath.Join(rootPrefix, d, registryHostPort), 0o755))
+	}
+	require.NoError(t, os.MkdirAll(filepath.Join(rootPrefix, "/etc/docker/certs.d", registryHostPortVendorOverDocker), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(rootPrefix, "/usr/share/containers/certs.d", registryHostPortVendorOverDocker), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(rootPrefix, "/etc/docker/certs.d", registryHostPortDockerOnly), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(nondefaultPerHostDir, registryHostPort), 0o755))
+
 	for _, c := range []struct {
 		sys      *types.SystemContext
+		hostPort string
 		expected string
 	}{
-		// The common case
-		{nil, systemPerHostResult},
-		// There is a context, but it does not override the path.
-		{&types.SystemContext{}, systemPerHostResult},
+		// Work with nil SystemContext.
+		{nil, registryHostPort, ""},
+		// Work with empty SystemContext.
+		{&types.SystemContext{}, registryHostPort, ""},
 		// Full path overridden
-		{&types.SystemContext{DockerCertPath: nondefaultFullPath}, nondefaultFullPath},
+		{&types.SystemContext{DockerCertPath: nondefaultFullPath}, registryHostPort, nondefaultFullPath},
 		// Per-host path overridden
 		{
 			&types.SystemContext{DockerPerHostCertDirPath: nondefaultPerHostDir},
+			registryHostPort,
 			filepath.Join(nondefaultPerHostDir, registryHostPort),
 		},
 		// Both overridden
@@ -49,12 +70,24 @@ func TestDockerCertDir(t *testing.T) {
 				DockerCertPath:           nondefaultFullPath,
 				DockerPerHostCertDirPath: nondefaultPerHostDir,
 			},
+			registryHostPort,
 			nondefaultFullPath,
 		},
 		// Root overridden
 		{
 			&types.SystemContext{RootForImplicitAbsolutePaths: rootPrefix},
-			filepath.Join(rootPrefix, systemPerHostResult),
+			registryHostPort,
+			filepath.Join(rootPrefix, "/etc/containers/certs.d", registryHostPort),
+		},
+		{
+			&types.SystemContext{RootForImplicitAbsolutePaths: rootPrefix},
+			registryHostPortVendorOverDocker,
+			filepath.Join(rootPrefix, "/usr/share/containers/certs.d", registryHostPortVendorOverDocker),
+		},
+		{
+			&types.SystemContext{RootForImplicitAbsolutePaths: rootPrefix},
+			registryHostPortDockerOnly,
+			filepath.Join(rootPrefix, "/etc/docker/certs.d", registryHostPortDockerOnly),
 		},
 		// Root and path overrides present simultaneously,
 		{
@@ -62,6 +95,7 @@ func TestDockerCertDir(t *testing.T) {
 				DockerCertPath:               nondefaultFullPath,
 				RootForImplicitAbsolutePaths: rootPrefix,
 			},
+			registryHostPort,
 			nondefaultFullPath,
 		},
 		{
@@ -69,6 +103,7 @@ func TestDockerCertDir(t *testing.T) {
 				DockerPerHostCertDirPath:     nondefaultPerHostDir,
 				RootForImplicitAbsolutePaths: rootPrefix,
 			},
+			registryHostPort,
 			filepath.Join(nondefaultPerHostDir, registryHostPort),
 		},
 		// … and everything at once
@@ -78,16 +113,18 @@ func TestDockerCertDir(t *testing.T) {
 				DockerPerHostCertDirPath:     nondefaultPerHostDir,
 				RootForImplicitAbsolutePaths: rootPrefix,
 			},
+			registryHostPort,
 			nondefaultFullPath,
 		},
 		// No environment expansion happens in the overridden paths
-		{&types.SystemContext{DockerCertPath: variableReference}, variableReference},
+		{&types.SystemContext{DockerCertPath: variableReference}, registryHostPort, variableReference},
 		{
 			&types.SystemContext{DockerPerHostCertDirPath: variableReference},
+			registryHostPort,
 			filepath.Join(variableReference, registryHostPort),
 		},
 	} {
-		path, err := dockerCertDir(c.sys, registryHostPort)
+		path, err := dockerCertDir(c.sys, c.hostPort)
 		require.Equal(t, nil, err)
 		assert.Equal(t, c.expected, path)
 	}

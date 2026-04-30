@@ -4,8 +4,26 @@
 containers-certs.d - Directory for storing custom container-registry TLS configurations
 
 # DESCRIPTION
-A custom TLS configuration for a container registry can be configured by creating a directory under `$HOME/.config/containers/certs.d` or `/etc/containers/certs.d`.
-The name of the directory must correspond to the `host`[`:port`] of the registry (e.g., `my-registry.com:5000`).
+A custom TLS configuration for a container registry can be configured by creating a directory named after the registry `host`[`:port`] (for example, `my-registry.com:5000`) in one of the following locations.
+Directories are consulted in this order (highest priority first):
+
+- For both rootful and rootless:
+  - `$XDG_CONFIG_HOME/containers/certs.d/` (or `$HOME/.config/containers/certs.d/` if `XDG_CONFIG_HOME` is unset)
+  - `/etc/containers/certs.d/`
+- For rootful (UID == 0):
+  - `/etc/containers/certs.rootful.d/`
+- For rootless (UID > 0):
+  - `/etc/containers/certs.rootless.d/`
+  - `/etc/containers/certs.rootless.d/<UID>/`
+- For both rootful and rootless:
+  - `/usr/share/containers/certs.d/`
+- For rootful (UID == 0):
+  - `/usr/share/containers/certs.rootful.d/`
+- For rootless (UID > 0):
+  - `/usr/share/containers/certs.rootless.d/`
+  - `/usr/share/containers/certs.rootless.d/<UID>/`
+- Compatibility fallback:
+  - `/etc/docker/certs.d/`
 
 The port part presence / absence must precisely match the port usage in image references,
 e.g. to affect `podman pull registry.example/foo`,
