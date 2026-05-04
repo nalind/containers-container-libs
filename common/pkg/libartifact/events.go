@@ -16,20 +16,12 @@ const (
 	EventTypeUnknown EventType = iota
 	// EventTypeArtifactPull represents an artifact pull.
 	EventTypeArtifactPull
-	// EventTypeArtifactPullError represents a failed artifact pull.
-	EventTypeArtifactPullError
 	// EventTypeArtifactPush represents an artifact push.
 	EventTypeArtifactPush
-	// EventTypeArtifactPushError represents a failed artifact push.
-	EventTypeArtifactPushError
 	// EventTypeArtifactRemove represents an artifact removal.
 	EventTypeArtifactRemove
-	// EventTypeArtifactRemoveError represents a failed artifact removal.
-	EventTypeArtifactRemoveError
 	// EventTypeArtifactAdd represents an artifact being added.
 	EventTypeArtifactAdd
-	// EventTypeArtifactAddError represents a failed artifact add.
-	EventTypeArtifactAddError
 )
 
 // Event represents an event such as an artifact pull or push.
