@@ -34,7 +34,7 @@ require (
 	github.com/sigstore/sigstore v1.10.11
 	github.com/sirupsen/logrus v1.10.2
 	github.com/stretchr/testify v1.12.1
-	github.com/sylabs/sif/v2 v2.24.1
+	github.com/sylabs/sif/v2 v2.24.2
 	github.com/ulikunitz/xz v0.5.17
 	github.com/vbauerster/mpb/v8 v8.16.1
 	go.etcd.io/bbolt v1.5.0
@@ -65,7 +65,7 @@ require (
 	github.com/go-jose/go-jose/v4 v4.1.5 // indirect
 	github.com/go-logr/logr v1.4.4 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
-	github.com/google/go-containerregistry v0.21.9 // indirect
+	github.com/google/go-containerregistry v0.22.1 // indirect
 	github.com/google/go-intervals v0.0.2 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/gorilla/mux v1.8.1 // indirect
